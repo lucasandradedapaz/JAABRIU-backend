@@ -22,10 +22,11 @@ public class ComentarioController {
         this.comentarioService = comentarioService;
     }
 
-    // Só usuário comum e admin comentam. Técnico só lê (ver listarComentarios).
+    // Usuário comum, técnico e admin podem comentar — todo mundo que
+    // participa do atendimento precisa conseguir conversar.
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAnyRole('USUARIO','ADMIN')")
+    @PreAuthorize("hasAnyRole('USUARIO','TECNICO','ADMIN')")
     public ComentarioResponse adicionarComentario(
             @PathVariable Long chamadoId,
             @AuthenticationPrincipal CustomUserDetails usuarioLogado,
