@@ -97,13 +97,20 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    // libera frontend react
+    // libera frontend react (local + produção)
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
 
-        configuration.setAllowedOrigins(
-                List.of("http://localhost:5173")
+        // setAllowedOriginPatterns (em vez de setAllowedOrigins) permite usar
+        // curinga (*) — útil pros deploys de preview da Vercel, que mudam de
+        // URL a cada PR/branch (ex: jaabriu-git-feature-x-usuario.vercel.app)
+        configuration.setAllowedOriginPatterns(
+                List.of(
+                        "http://localhost:5173",
+                        "https://jaabriu.vercel.app",
+                        "https://jaabriu-*.vercel.app"
+                )
         );
 
         configuration.setAllowedMethods(
