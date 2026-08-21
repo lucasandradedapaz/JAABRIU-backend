@@ -9,6 +9,7 @@ import jaabriu.jaabriu_backend.exception.ResourceNotFoundException;
 import jaabriu.jaabriu_backend.repository.ChamadoRepository;
 import jaabriu.jaabriu_backend.repository.ComentarioRepository;
 import jaabriu.jaabriu_backend.repository.UsuarioRepository;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -21,17 +22,20 @@ public class ComentarioService {
     private final ChamadoRepository chamadoRepository;
     private final UsuarioRepository usuarioRepository;
     private final HistoricoService historicoService;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public ComentarioService(
             ComentarioRepository comentarioRepository,
             ChamadoRepository chamadoRepository,
             UsuarioRepository usuarioRepository,
-            HistoricoService historicoService
+            HistoricoService historicoService,
+            SimpMessagingTemplate messagingTemplate
     ) {
         this.comentarioRepository = comentarioRepository;
         this.chamadoRepository = chamadoRepository;
         this.usuarioRepository = usuarioRepository;
         this.historicoService = historicoService;
+        this.messagingTemplate = messagingTemplate;
     }
 
     public ComentarioResponse adicionarComentario(
@@ -61,7 +65,16 @@ public class ComentarioService {
                 "Comentário adicionado ao chamado"
         );
 
-        return mapToResponse(salvo);
+        ComentarioResponse response = mapToResponse(salvo);
+
+        // 🔴 Tempo real: publica a nova mensagem pra quem estiver com o
+        // chamado aberto (usuário, técnico ou admin), sem precisar de F5.
+        messagingTemplate.convertAndSend(
+                "/topic/chamados/" + chamadoId + "/comentarios",
+                response
+        );
+
+        return response;
     }
 
     public List<ComentarioResponse> listarPorChamado(Long chamadoId) {
