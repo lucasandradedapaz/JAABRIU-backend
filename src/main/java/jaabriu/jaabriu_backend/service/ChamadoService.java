@@ -21,15 +21,18 @@ public class ChamadoService {
     private final ChamadoRepository chamadoRepository;
     private final UsuarioRepository usuarioRepository;
     private final HistoricoService historicoService;
+    private final NotificacaoService notificacaoService;
 
     public ChamadoService(
             ChamadoRepository chamadoRepository,
             UsuarioRepository usuarioRepository,
-            HistoricoService historicoService
+            HistoricoService historicoService,
+            NotificacaoService notificacaoService
     ) {
         this.chamadoRepository = chamadoRepository;
         this.usuarioRepository = usuarioRepository;
         this.historicoService = historicoService;
+        this.notificacaoService = notificacaoService;
     }
 
     public ChamadoResponse criar(Long usuarioId, ChamadoRequest request) {
@@ -214,10 +217,38 @@ public class ChamadoService {
                 TipoAlteracao.STATUS
         );
 
+        // 🔔 Notifica o solicitante sobre a mudança de status
+        boolean foiReaberto = (statusAntigo == Status.FECHADO || statusAntigo == Status.RESOLVIDO)
+                && (statusNovo == Status.ABERTO || statusNovo == Status.EM_ANDAMENTO);
+
+        notificacaoService.notificar(
+                atualizado.getUsuario(),
+                usuarioAcao.getId(),
+                foiReaberto
+                        ? "Chamado #" + atualizado.getId() + " reaberto"
+                        : "Chamado #" + atualizado.getId() + " atualizado",
+                foiReaberto
+                        ? "Seu chamado foi reaberto por " + usuarioAcao.getNome() + "."
+                        : statusNovo == Status.RESOLVIDO
+                                ? "Seu chamado foi resolvido! Assim que for fechado, você poderá avaliar o atendimento."
+                                : "O status do seu chamado mudou para " + statusLabel(statusNovo) + ".",
+                foiReaberto ? TipoNotificacao.CHAMADO_REABERTO
+                        : statusNovo == Status.RESOLVIDO ? TipoNotificacao.CHAMADO_RESOLVIDO
+                        : TipoNotificacao.CHAMADO_ATUALIZADO,
+                atualizado.getId()
+        );
+
         return mapToResponse(atualizado);
     }
 
-    // NOVO: fechar chamado com solução obrigatória e técnico atribuído
+    private String statusLabel(Status status) {
+        return switch (status) {
+            case ABERTO -> "Aberto";
+            case EM_ANDAMENTO -> "Em andamento";
+            case RESOLVIDO -> "Resolvido";
+            case FECHADO -> "Fechado";
+        };
+    }
     public ChamadoResponse fecharChamado(Long chamadoId, FecharChamadoRequest request, Long usuarioAcaoId) {
 
         Chamado chamado = chamadoRepository.findById(chamadoId)
@@ -270,6 +301,17 @@ public class ChamadoService {
                 TipoAlteracao.STATUS
         );
 
+        // 🔔 Notifica o solicitante que o chamado foi fechado (agora ele pode avaliar)
+        notificacaoService.notificar(
+                atualizado.getUsuario(),
+                usuarioAcao.getId(),
+                "Chamado #" + atualizado.getId() + " fechado",
+                "Seu chamado foi encerrado por " + usuarioAcao.getNome()
+                        + ". Que tal avaliar o atendimento?",
+                TipoNotificacao.CHAMADO_FECHADO,
+                atualizado.getId()
+        );
+
         return mapToResponse(atualizado);
     }
 
@@ -292,6 +334,16 @@ public class ChamadoService {
                 usuarioAcao,
                 "Chamado editado por " + usuarioAcao.getNome(),
                 TipoAlteracao.OUTRO
+        );
+
+        // 🔔 Notifica o solicitante que os dados do chamado foram alterados
+        notificacaoService.notificar(
+                atualizado.getUsuario(),
+                usuarioAcao.getId(),
+                "Chamado #" + atualizado.getId() + " atualizado",
+                usuarioAcao.getNome() + " editou as informações do seu chamado.",
+                TipoNotificacao.CHAMADO_ATUALIZADO,
+                atualizado.getId()
         );
 
         return mapToResponse(atualizado);

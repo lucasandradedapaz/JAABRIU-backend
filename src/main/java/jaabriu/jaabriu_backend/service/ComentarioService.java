@@ -4,6 +4,7 @@ import jaabriu.jaabriu_backend.dto.ComentarioRequest;
 import jaabriu.jaabriu_backend.dto.ComentarioResponse;
 import jaabriu.jaabriu_backend.entity.Chamado;
 import jaabriu.jaabriu_backend.entity.Comentario;
+import jaabriu.jaabriu_backend.entity.TipoNotificacao;
 import jaabriu.jaabriu_backend.entity.Usuario;
 import jaabriu.jaabriu_backend.exception.ResourceNotFoundException;
 import jaabriu.jaabriu_backend.repository.ChamadoRepository;
@@ -13,7 +14,9 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class ComentarioService {
@@ -23,19 +26,22 @@ public class ComentarioService {
     private final UsuarioRepository usuarioRepository;
     private final HistoricoService historicoService;
     private final SimpMessagingTemplate messagingTemplate;
+    private final NotificacaoService notificacaoService;
 
     public ComentarioService(
             ComentarioRepository comentarioRepository,
             ChamadoRepository chamadoRepository,
             UsuarioRepository usuarioRepository,
             HistoricoService historicoService,
-            SimpMessagingTemplate messagingTemplate
+            SimpMessagingTemplate messagingTemplate,
+            NotificacaoService notificacaoService
     ) {
         this.comentarioRepository = comentarioRepository;
         this.chamadoRepository = chamadoRepository;
         this.usuarioRepository = usuarioRepository;
         this.historicoService = historicoService;
         this.messagingTemplate = messagingTemplate;
+        this.notificacaoService = notificacaoService;
     }
 
     public ComentarioResponse adicionarComentario(
@@ -73,6 +79,26 @@ public class ComentarioService {
                 "/topic/chamados/" + chamadoId + "/comentarios",
                 response
         );
+
+        // 🔔 Notifica todo mundo envolvido no chamado, menos quem escreveu
+        String titulo = "Nova mensagem no chamado #" + chamado.getId();
+        String mensagemNotificacao = usuario.getNome() + " enviou uma nova mensagem.";
+
+        Set<Usuario> envolvidos = new HashSet<>();
+        if (chamado.getUsuario() != null) envolvidos.add(chamado.getUsuario());
+        if (chamado.getTecnico() != null) envolvidos.add(chamado.getTecnico());
+        if (chamado.getTecnicoAtribuido() != null) envolvidos.add(chamado.getTecnicoAtribuido());
+
+        for (Usuario destinatario : envolvidos) {
+            notificacaoService.notificar(
+                    destinatario,
+                    usuario.getId(),
+                    titulo,
+                    mensagemNotificacao,
+                    TipoNotificacao.NOVA_MENSAGEM,
+                    chamado.getId()
+            );
+        }
 
         return response;
     }
