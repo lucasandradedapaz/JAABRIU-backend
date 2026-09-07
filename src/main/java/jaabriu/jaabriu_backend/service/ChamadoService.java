@@ -22,17 +22,20 @@ public class ChamadoService {
     private final UsuarioRepository usuarioRepository;
     private final HistoricoService historicoService;
     private final NotificacaoService notificacaoService;
+    private final SlaConfiguracaoService slaConfiguracaoService;
 
     public ChamadoService(
             ChamadoRepository chamadoRepository,
             UsuarioRepository usuarioRepository,
             HistoricoService historicoService,
-            NotificacaoService notificacaoService
+            NotificacaoService notificacaoService,
+            SlaConfiguracaoService slaConfiguracaoService
     ) {
         this.chamadoRepository = chamadoRepository;
         this.usuarioRepository = usuarioRepository;
         this.historicoService = historicoService;
         this.notificacaoService = notificacaoService;
+        this.slaConfiguracaoService = slaConfiguracaoService;
     }
 
     public ChamadoResponse criar(Long usuarioId, ChamadoRequest request) {
@@ -67,6 +70,11 @@ public class ChamadoService {
         chamado.setCreatedAt(LocalDateTime.now());
         chamado.setUpdatedAt(LocalDateTime.now());
         chamado.setSlaInicio(LocalDateTime.now());
+        chamado.setSlaFim(
+                LocalDateTime.now().plusMinutes(
+                        slaConfiguracaoService.minutosResolucaoPara(prioridade)
+                )
+        );
 
         Chamado salvo = chamadoRepository.save(chamado);
 
@@ -423,7 +431,19 @@ public class ChamadoService {
                 .dataFechamento(chamado.getDataFechamento())
                 .createdAt(chamado.getCreatedAt())
                 .updatedAt(chamado.getUpdatedAt())
-                .atrasado(chamado.getAtrasado())
+                .atrasado(calcularAtrasado(chamado))
                 .build();
+    }
+
+    // Calculado na hora, sempre correto — não depende de nenhum job
+    // rodando em segundo plano pra manter atualizado.
+    private Boolean calcularAtrasado(Chamado chamado) {
+        if (chamado.getStatus() == Status.RESOLVIDO || chamado.getStatus() == Status.FECHADO) {
+            return false;
+        }
+        if (chamado.getSlaFim() == null) {
+            return false;
+        }
+        return LocalDateTime.now().isAfter(chamado.getSlaFim());
     }
 }
