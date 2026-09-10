@@ -99,9 +99,10 @@ public class ChamadoController {
         );
     }
 
-    // Só técnico/admin podem editar título/descrição
+    // Só admin pode editar título/descrição (técnico não edita os dados
+    // originais do chamado que o usuário criou)
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('TECNICO','ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ChamadoResponse editar(
             @PathVariable Long id,
             @Valid @RequestBody EditarChamadoRequest request,
@@ -122,9 +123,9 @@ public class ChamadoController {
         return chamadoService.definirPrioridade(id, request, usuarioLogado.getId());
     }
 
-    // Só técnico/admin podem excluir
+    // Só admin pode excluir
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('TECNICO','ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void excluir(@PathVariable Long id) {
         chamadoService.excluir(id);

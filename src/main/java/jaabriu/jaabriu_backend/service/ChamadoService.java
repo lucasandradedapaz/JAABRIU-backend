@@ -3,6 +3,7 @@ package jaabriu.jaabriu_backend.service;
 import jaabriu.jaabriu_backend.dto.ChamadoFiltroRequest;
 import jaabriu.jaabriu_backend.dto.ChamadoRequest;
 import jaabriu.jaabriu_backend.dto.ChamadoResponse;
+import jaabriu.jaabriu_backend.dto.DefinirPrioridadeRequest;
 import jaabriu.jaabriu_backend.dto.EditarChamadoRequest;
 import jaabriu.jaabriu_backend.dto.FecharChamadoRequest;
 import jaabriu.jaabriu_backend.entity.*;
