@@ -54,7 +54,7 @@ public class Chamado {
     private Status status;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = true)
     private Prioridade prioridade;
 
     @Enumerated(EnumType.STRING)
@@ -109,16 +109,8 @@ public class Chamado {
             dataAbertura = LocalDateTime.now();
         }
 
-        if (slaInicio == null) {
-            slaInicio = LocalDateTime.now();
-        }
-
         if (status == null) {
             status = Status.ABERTO;
-        }
-
-        if (prioridade == null) {
-            prioridade = Prioridade.MEDIA;
         }
 
         if (categoria == null) {

@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import jaabriu.jaabriu_backend.dto.ChamadoFiltroRequest;
 import jaabriu.jaabriu_backend.dto.ChamadoRequest;
 import jaabriu.jaabriu_backend.dto.ChamadoResponse;
+import jaabriu.jaabriu_backend.dto.DefinirPrioridadeRequest;
 import jaabriu.jaabriu_backend.dto.EditarChamadoRequest;
 import jaabriu.jaabriu_backend.dto.FecharChamadoRequest;
 import jaabriu.jaabriu_backend.dto.HistoricoResponse;
@@ -107,6 +108,18 @@ public class ChamadoController {
             @AuthenticationPrincipal CustomUserDetails usuarioLogado
     ) {
         return chamadoService.editar(id, request, usuarioLogado.getId());
+    }
+
+    // Só técnico/admin definem a prioridade (chamado aberto por usuário
+    // comum nasce sem prioridade, aguardando essa triagem)
+    @PutMapping("/{id}/prioridade")
+    @PreAuthorize("hasAnyRole('TECNICO','ADMIN')")
+    public ChamadoResponse definirPrioridade(
+            @PathVariable Long id,
+            @Valid @RequestBody DefinirPrioridadeRequest request,
+            @AuthenticationPrincipal CustomUserDetails usuarioLogado
+    ) {
+        return chamadoService.definirPrioridade(id, request, usuarioLogado.getId());
     }
 
     // Só técnico/admin podem excluir

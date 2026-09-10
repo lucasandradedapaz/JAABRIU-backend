@@ -49,15 +49,17 @@ public class ChamadoService {
         Status status = Status.ABERTO;
 
         // Regra de prioridade por perfil:
-        // - USUARIO comum não define prioridade -> sempre MEDIA
-        // - TECNICO/ADMIN podem enviar a prioridade desejada
-        Prioridade prioridade;
-        if (usuario.getPerfil() == Usuario.Perfil.USUARIO) {
-            prioridade = Prioridade.MEDIA;
-        } else if (request.getPrioridade() != null && !request.getPrioridade().isBlank()) {
-            prioridade = Prioridade.valueOf(request.getPrioridade().toUpperCase());
-        } else {
-            prioridade = Prioridade.MEDIA;
+        // - USUARIO comum NÃO define prioridade -> fica em branco (aguardando
+        //   triagem do técnico/admin). O relógio do SLA só começa a contar
+        //   quando alguém definir a prioridade.
+        // - TECNICO/ADMIN podem enviar a prioridade já na criação
+        Prioridade prioridade = null;
+        if (usuario.getPerfil() != Usuario.Perfil.USUARIO) {
+            if (request.getPrioridade() != null && !request.getPrioridade().isBlank()) {
+                prioridade = Prioridade.valueOf(request.getPrioridade().toUpperCase());
+            } else {
+                prioridade = Prioridade.MEDIA;
+            }
         }
 
         Chamado chamado = new Chamado();
@@ -69,12 +71,16 @@ public class ChamadoService {
         chamado.setCategoria(categoria);
         chamado.setCreatedAt(LocalDateTime.now());
         chamado.setUpdatedAt(LocalDateTime.now());
-        chamado.setSlaInicio(LocalDateTime.now());
-        chamado.setSlaFim(
-                LocalDateTime.now().plusMinutes(
-                        slaConfiguracaoService.minutosResolucaoPara(prioridade)
-                )
-        );
+
+        // Só começa a contar o SLA se já existir prioridade definida
+        if (prioridade != null) {
+            chamado.setSlaInicio(LocalDateTime.now());
+            chamado.setSlaFim(
+                    LocalDateTime.now().plusMinutes(
+                            slaConfiguracaoService.minutosResolucaoPara(prioridade)
+                    )
+            );
+        }
 
         Chamado salvo = chamadoRepository.save(chamado);
 
@@ -364,6 +370,60 @@ public class ChamadoService {
                 .orElseThrow(() -> new ResourceNotFoundException("Chamado não encontrado"));
 
         chamadoRepository.delete(chamado);
+    }
+
+    // NOVO: técnico/admin define a prioridade de um chamado que o usuário
+    // comum abriu sem prioridade. É neste momento que o relógio do SLA
+    // começa a contar (antes disso não havia prazo pra medir).
+    public ChamadoResponse definirPrioridade(
+            Long chamadoId,
+            DefinirPrioridadeRequest request,
+            Long usuarioAcaoId
+    ) {
+        Chamado chamado = chamadoRepository.findById(chamadoId)
+                .orElseThrow(() -> new ResourceNotFoundException("Chamado não encontrado"));
+
+        Usuario usuarioAcao = resolverUsuarioAcao(usuarioAcaoId, chamado);
+
+        Prioridade prioridade;
+        try {
+            prioridade = Prioridade.valueOf(request.getPrioridade().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("Prioridade inválida.");
+        }
+
+        chamado.setPrioridade(prioridade);
+        chamado.setUpdatedAt(LocalDateTime.now());
+
+        // Só reinicia o relógio se ainda não tinha sido definido antes
+        if (chamado.getSlaInicio() == null) {
+            chamado.setSlaInicio(LocalDateTime.now());
+            chamado.setSlaFim(
+                    LocalDateTime.now().plusMinutes(
+                            slaConfiguracaoService.minutosResolucaoPara(prioridade)
+                    )
+            );
+        }
+
+        Chamado atualizado = chamadoRepository.save(chamado);
+
+        historicoService.registrar(
+                atualizado,
+                usuarioAcao,
+                "Prioridade definida como " + prioridade + " por " + usuarioAcao.getNome(),
+                TipoAlteracao.PRIORIDADE
+        );
+
+        notificacaoService.notificar(
+                atualizado.getUsuario(),
+                usuarioAcao.getId(),
+                "Chamado #" + atualizado.getId() + " priorizado",
+                "A prioridade do seu chamado foi definida como " + prioridade + ".",
+                TipoNotificacao.CHAMADO_ATUALIZADO,
+                atualizado.getId()
+        );
+
+        return mapToResponse(atualizado);
     }
 
     private Usuario resolverUsuarioAcao(Long usuarioAcaoId, Chamado chamado) {
