@@ -21,8 +21,8 @@ public class ChamadoRequest {
     // para não quebrar payloads antigos, mas é ignorado.
     private String status;
 
-    // Opcional: usuário comum não define prioridade (o service aplica
-    // MÉDIA automaticamente). Técnico/admin podem enviar um valor.
+    // Opcional: usuário comum não define prioridade — o chamado nasce sem
+    // prioridade (aguardando triagem). Técnico/admin podem enviar um valor.
     private String prioridade;
 
     @NotBlank
