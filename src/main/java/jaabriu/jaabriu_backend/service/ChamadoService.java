@@ -24,19 +24,22 @@ public class ChamadoService {
     private final HistoricoService historicoService;
     private final NotificacaoService notificacaoService;
     private final SlaConfiguracaoService slaConfiguracaoService;
+    private final ChamadoRealtimeService chamadoRealtimeService;
 
     public ChamadoService(
             ChamadoRepository chamadoRepository,
             UsuarioRepository usuarioRepository,
             HistoricoService historicoService,
             NotificacaoService notificacaoService,
-            SlaConfiguracaoService slaConfiguracaoService
+            SlaConfiguracaoService slaConfiguracaoService,
+            ChamadoRealtimeService chamadoRealtimeService
     ) {
         this.chamadoRepository = chamadoRepository;
         this.usuarioRepository = usuarioRepository;
         this.historicoService = historicoService;
         this.notificacaoService = notificacaoService;
         this.slaConfiguracaoService = slaConfiguracaoService;
+        this.chamadoRealtimeService = chamadoRealtimeService;
     }
 
     public ChamadoResponse criar(Long usuarioId, ChamadoRequest request) {
@@ -92,7 +95,10 @@ public class ChamadoService {
                 TipoAlteracao.OUTRO
         );
 
-        return mapToResponse(salvo);
+        ChamadoResponse resposta = mapToResponse(salvo);
+        chamadoRealtimeService.transmitir(salvo, resposta, "CHAMADO_CRIADO");
+
+        return resposta;
     }
 
     // usuarioLogadoId/perfil: usuário comum só vê os próprios chamados;
@@ -253,7 +259,10 @@ public class ChamadoService {
                 atualizado.getId()
         );
 
-        return mapToResponse(atualizado);
+        ChamadoResponse respostaStatus = mapToResponse(atualizado);
+        chamadoRealtimeService.transmitir(atualizado, respostaStatus, "CHAMADO_ATUALIZADO");
+
+        return respostaStatus;
     }
 
     private String statusLabel(Status status) {
@@ -327,7 +336,10 @@ public class ChamadoService {
                 atualizado.getId()
         );
 
-        return mapToResponse(atualizado);
+        ChamadoResponse respostaFechamento = mapToResponse(atualizado);
+        chamadoRealtimeService.transmitir(atualizado, respostaFechamento, "CHAMADO_ATUALIZADO");
+
+        return respostaFechamento;
     }
 
     // NOVO: editar título/descrição do chamado
@@ -361,7 +373,10 @@ public class ChamadoService {
                 atualizado.getId()
         );
 
-        return mapToResponse(atualizado);
+        ChamadoResponse respostaEdicao = mapToResponse(atualizado);
+        chamadoRealtimeService.transmitir(atualizado, respostaEdicao, "CHAMADO_ATUALIZADO");
+
+        return respostaEdicao;
     }
 
     // NOVO: excluir chamado
@@ -424,7 +439,10 @@ public class ChamadoService {
                 atualizado.getId()
         );
 
-        return mapToResponse(atualizado);
+        ChamadoResponse respostaPrioridade = mapToResponse(atualizado);
+        chamadoRealtimeService.transmitir(atualizado, respostaPrioridade, "CHAMADO_ATUALIZADO");
+
+        return respostaPrioridade;
     }
 
     private Usuario resolverUsuarioAcao(Long usuarioAcaoId, Chamado chamado) {
