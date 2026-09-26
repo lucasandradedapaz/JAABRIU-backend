@@ -1,19 +1,21 @@
 package jaabriu.jaabriu_backend.controller;
 
 import jakarta.validation.Valid;
+import jaabriu.jaabriu_backend.dto.AdicionarSolucaoRequest;
+import jaabriu.jaabriu_backend.dto.AtribuirSetorRequest;
+import jaabriu.jaabriu_backend.dto.AtribuirTecnicoRequest;
 import jaabriu.jaabriu_backend.dto.ChamadoFiltroRequest;
 import jaabriu.jaabriu_backend.dto.ChamadoRequest;
 import jaabriu.jaabriu_backend.dto.ChamadoResponse;
 import jaabriu.jaabriu_backend.dto.DefinirPrioridadeRequest;
 import jaabriu.jaabriu_backend.dto.EditarChamadoRequest;
-import jaabriu.jaabriu_backend.dto.FecharChamadoRequest;
 import jaabriu.jaabriu_backend.dto.HistoricoResponse;
+import jaabriu.jaabriu_backend.dto.SolucaoResponse;
 import jaabriu.jaabriu_backend.security.CustomUserDetails;
 import jaabriu.jaabriu_backend.service.ChamadoService;
 import jaabriu.jaabriu_backend.service.HistoricoService;
 
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -86,17 +88,62 @@ public class ChamadoController {
         return chamadoService.atualizarStatus(id, status, usuarioLogado.getId());
     }
 
-    // Só técnico/admin podem fechar um chamado
-    @PutMapping("/{id}/fechar")
+    // ================== ATRIBUIÇÃO DE SETOR E TÉCNICOS ==================
+    // Só técnico/admin atribuem setor/técnicos (item 1.1 do pedido) — a
+    // regra é aplicada aqui E de novo dentro do service (defesa em
+    // profundidade, não é só esconder botão no frontend).
+
+    @PutMapping("/{id}/setor")
     @PreAuthorize("hasAnyRole('TECNICO','ADMIN')")
-    public ResponseEntity<ChamadoResponse> fecharChamado(
+    public ChamadoResponse atribuirSetor(
             @PathVariable Long id,
-            @Valid @RequestBody FecharChamadoRequest request,
+            @Valid @RequestBody AtribuirSetorRequest request,
             @AuthenticationPrincipal CustomUserDetails usuarioLogado
     ) {
-        return ResponseEntity.ok(
-                chamadoService.fecharChamado(id, request, usuarioLogado.getId())
-        );
+        return chamadoService.atribuirSetor(id, request, usuarioLogado.getId());
+    }
+
+    @PostMapping("/{id}/tecnicos")
+    @PreAuthorize("hasAnyRole('TECNICO','ADMIN')")
+    public ChamadoResponse adicionarTecnico(
+            @PathVariable Long id,
+            @Valid @RequestBody AtribuirTecnicoRequest request,
+            @AuthenticationPrincipal CustomUserDetails usuarioLogado
+    ) {
+        return chamadoService.adicionarTecnico(id, request, usuarioLogado.getId());
+    }
+
+    @DeleteMapping("/{id}/tecnicos/{tecnicoId}")
+    @PreAuthorize("hasAnyRole('TECNICO','ADMIN')")
+    public ChamadoResponse removerTecnico(
+            @PathVariable Long id,
+            @PathVariable Long tecnicoId,
+            @AuthenticationPrincipal CustomUserDetails usuarioLogado
+    ) {
+        return chamadoService.removerTecnico(id, tecnicoId, usuarioLogado.getId());
+    }
+
+    // ================== HISTÓRICO DE SOLUÇÕES ==================
+
+    // Só técnico/admin registram solução (item 8 do pedido)
+    @PostMapping("/{id}/solucoes")
+    @PreAuthorize("hasAnyRole('TECNICO','ADMIN')")
+    public ChamadoResponse adicionarSolucao(
+            @PathVariable Long id,
+            @Valid @RequestBody AdicionarSolucaoRequest request,
+            @AuthenticationPrincipal CustomUserDetails usuarioLogado
+    ) {
+        return chamadoService.adicionarSolucao(id, request, usuarioLogado.getId());
+    }
+
+    // Qualquer perfil autenticado pode ver — usuário comum só o próprio
+    // chamado (checagem de posse feita dentro do service).
+    @GetMapping("/{id}/solucoes")
+    public List<SolucaoResponse> listarSolucoes(
+            @PathVariable Long id,
+            @AuthenticationPrincipal CustomUserDetails usuarioLogado
+    ) {
+        return chamadoService.listarSolucoes(id, usuarioLogado.getId(), usuarioLogado.getPerfil());
     }
 
     // Só admin pode editar título/descrição (técnico não edita os dados

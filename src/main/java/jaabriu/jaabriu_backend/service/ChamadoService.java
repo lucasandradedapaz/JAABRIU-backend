@@ -1,19 +1,27 @@
 package jaabriu.jaabriu_backend.service;
 
+import jaabriu.jaabriu_backend.dto.AdicionarSolucaoRequest;
+import jaabriu.jaabriu_backend.dto.AtribuirSetorRequest;
+import jaabriu.jaabriu_backend.dto.AtribuirTecnicoRequest;
 import jaabriu.jaabriu_backend.dto.ChamadoFiltroRequest;
 import jaabriu.jaabriu_backend.dto.ChamadoRequest;
 import jaabriu.jaabriu_backend.dto.ChamadoResponse;
 import jaabriu.jaabriu_backend.dto.DefinirPrioridadeRequest;
 import jaabriu.jaabriu_backend.dto.EditarChamadoRequest;
-import jaabriu.jaabriu_backend.dto.FecharChamadoRequest;
+import jaabriu.jaabriu_backend.dto.SolucaoResponse;
+import jaabriu.jaabriu_backend.dto.UsuarioResponse;
 import jaabriu.jaabriu_backend.entity.*;
 import jaabriu.jaabriu_backend.exception.BusinessException;
 import jaabriu.jaabriu_backend.exception.ResourceNotFoundException;
 import jaabriu.jaabriu_backend.repository.ChamadoRepository;
+import jaabriu.jaabriu_backend.repository.SolucaoChamadoRepository;
 import jaabriu.jaabriu_backend.repository.UsuarioRepository;
+import jaabriu.jaabriu_backend.util.HtmlSanitizer;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 
 @Service
@@ -21,6 +29,7 @@ public class ChamadoService {
 
     private final ChamadoRepository chamadoRepository;
     private final UsuarioRepository usuarioRepository;
+    private final SolucaoChamadoRepository solucaoChamadoRepository;
     private final HistoricoService historicoService;
     private final NotificacaoService notificacaoService;
     private final SlaConfiguracaoService slaConfiguracaoService;
@@ -29,6 +38,7 @@ public class ChamadoService {
     public ChamadoService(
             ChamadoRepository chamadoRepository,
             UsuarioRepository usuarioRepository,
+            SolucaoChamadoRepository solucaoChamadoRepository,
             HistoricoService historicoService,
             NotificacaoService notificacaoService,
             SlaConfiguracaoService slaConfiguracaoService,
@@ -36,6 +46,7 @@ public class ChamadoService {
     ) {
         this.chamadoRepository = chamadoRepository;
         this.usuarioRepository = usuarioRepository;
+        this.solucaoChamadoRepository = solucaoChamadoRepository;
         this.historicoService = historicoService;
         this.notificacaoService = notificacaoService;
         this.slaConfiguracaoService = slaConfiguracaoService;
@@ -209,17 +220,34 @@ public class ChamadoService {
             return mapToResponse(chamado);
         }
 
+        // Fechar exige que já exista pelo menos uma solução registrada no
+        // histórico (item 5 do pedido: o status continua controlado pelas
+        // regras já existentes, só trocamos "técnico que auxiliou" por essa
+        // checagem do histórico de soluções).
+        if (statusNovo == Status.FECHADO && !solucaoChamadoRepository.existsByChamado(chamado)) {
+            throw new BusinessException(
+                    "Registre uma solução antes de fechar o chamado."
+            );
+        }
+
         chamado.setStatus(statusNovo);
         chamado.setUpdatedAt(LocalDateTime.now());
 
-        // Ao resolver, se ainda não houver técnico responsável, quem resolveu assume o chamado
-        if (statusNovo == Status.RESOLVIDO
+        // Ao resolver/fechar, se ainda não houver técnico responsável, quem
+        // fez a ação assume o chamado
+        if ((statusNovo == Status.RESOLVIDO || statusNovo == Status.FECHADO)
                 && chamado.getTecnico() == null
                 && (usuarioAcao.getPerfil() == Usuario.Perfil.TECNICO || usuarioAcao.getPerfil() == Usuario.Perfil.ADMIN)) {
             chamado.setTecnico(usuarioAcao);
         }
 
-        // Se o chamado está sendo reaberto, limpa a solução/fechamento anteriores
+        if (statusNovo == Status.FECHADO) {
+            chamado.setDataFechamento(LocalDateTime.now());
+        }
+
+        // Se o chamado está sendo reaberto, limpa só a data de fechamento —
+        // o histórico de soluções (item 2.2 do pedido) NUNCA é apagado nem
+        // substituído aqui.
         if (statusNovo == Status.ABERTO || statusNovo == Status.EM_ANDAMENTO) {
             chamado.setDataFechamento(null);
         }
@@ -242,20 +270,35 @@ public class ChamadoService {
         boolean foiReaberto = (statusAntigo == Status.FECHADO || statusAntigo == Status.RESOLVIDO)
                 && (statusNovo == Status.ABERTO || statusNovo == Status.EM_ANDAMENTO);
 
+        String tituloNotificacao;
+        String mensagemNotificacao;
+        TipoNotificacao tipoNotificacao;
+
+        if (foiReaberto) {
+            tituloNotificacao = "Chamado #" + atualizado.getId() + " reaberto";
+            mensagemNotificacao = "Seu chamado foi reaberto por " + usuarioAcao.getNome() + ".";
+            tipoNotificacao = TipoNotificacao.CHAMADO_REABERTO;
+        } else if (statusNovo == Status.RESOLVIDO) {
+            tituloNotificacao = "Chamado #" + atualizado.getId() + " atualizado";
+            mensagemNotificacao = "Seu chamado foi resolvido! Assim que for fechado, você poderá avaliar o atendimento.";
+            tipoNotificacao = TipoNotificacao.CHAMADO_RESOLVIDO;
+        } else if (statusNovo == Status.FECHADO) {
+            tituloNotificacao = "Chamado #" + atualizado.getId() + " fechado";
+            mensagemNotificacao = "Seu chamado foi encerrado por " + usuarioAcao.getNome()
+                    + ". Que tal avaliar o atendimento?";
+            tipoNotificacao = TipoNotificacao.CHAMADO_FECHADO;
+        } else {
+            tituloNotificacao = "Chamado #" + atualizado.getId() + " atualizado";
+            mensagemNotificacao = "O status do seu chamado mudou para " + statusLabel(statusNovo) + ".";
+            tipoNotificacao = TipoNotificacao.CHAMADO_ATUALIZADO;
+        }
+
         notificacaoService.notificar(
                 atualizado.getUsuario(),
                 usuarioAcao.getId(),
-                foiReaberto
-                        ? "Chamado #" + atualizado.getId() + " reaberto"
-                        : "Chamado #" + atualizado.getId() + " atualizado",
-                foiReaberto
-                        ? "Seu chamado foi reaberto por " + usuarioAcao.getNome() + "."
-                        : statusNovo == Status.RESOLVIDO
-                                ? "Seu chamado foi resolvido! Assim que for fechado, você poderá avaliar o atendimento."
-                                : "O status do seu chamado mudou para " + statusLabel(statusNovo) + ".",
-                foiReaberto ? TipoNotificacao.CHAMADO_REABERTO
-                        : statusNovo == Status.RESOLVIDO ? TipoNotificacao.CHAMADO_RESOLVIDO
-                        : TipoNotificacao.CHAMADO_ATUALIZADO,
+                tituloNotificacao,
+                mensagemNotificacao,
+                tipoNotificacao,
                 atualizado.getId()
         );
 
@@ -273,73 +316,240 @@ public class ChamadoService {
             case FECHADO -> "Fechado";
         };
     }
-    public ChamadoResponse fecharChamado(Long chamadoId, FecharChamadoRequest request, Long usuarioAcaoId) {
+
+    // ============================================================
+    // 1. ATRIBUIÇÃO DE SETOR E TÉCNICOS
+    // ============================================================
+
+    // Garante, dentro do service (e não só escondendo botão no frontend),
+    // que só ADMIN/TECNICO conseguem atribuir setor/técnicos ou registrar
+    // solução — item 8 do pedido.
+    private void exigirGerenciador(Usuario usuarioAcao) {
+        if (usuarioAcao.getPerfil() != Usuario.Perfil.TECNICO
+                && usuarioAcao.getPerfil() != Usuario.Perfil.ADMIN) {
+            throw new AccessDeniedException(
+                    "Apenas administradores ou técnicos podem realizar esta ação."
+            );
+        }
+    }
+
+    // Usuário comum só pode ver os próprios dados; técnico/admin veem tudo.
+    private void exigirVisualizacao(Chamado chamado, Long usuarioLogadoId, Usuario.Perfil perfil) {
+        if (perfil == Usuario.Perfil.USUARIO
+                && (chamado.getUsuario() == null || !chamado.getUsuario().getId().equals(usuarioLogadoId))) {
+            throw new AccessDeniedException("Você não tem permissão para ver este chamado.");
+        }
+    }
+
+    public ChamadoResponse atribuirSetor(Long chamadoId, AtribuirSetorRequest request, Long usuarioAcaoId) {
 
         Chamado chamado = chamadoRepository.findById(chamadoId)
                 .orElseThrow(() -> new ResourceNotFoundException("Chamado não encontrado"));
 
         Usuario usuarioAcao = resolverUsuarioAcao(usuarioAcaoId, chamado);
+        exigirGerenciador(usuarioAcao);
 
-        if (request.getDescricaoSolucao() == null || request.getDescricaoSolucao().isBlank()) {
-            throw new BusinessException("Descrição da solução é obrigatória");
+        Setor setor;
+        try {
+            setor = Setor.valueOf(request.getSetor().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("Setor inválido.");
         }
 
-        if (request.getTecnicoAtribuidoId() == null) {
-            throw new BusinessException(
-                    "Informe o técnico que auxiliou no atendimento antes de finalizar o chamado."
-            );
-        }
-
-        Usuario tecnicoAtribuido = usuarioRepository.findById(request.getTecnicoAtribuidoId())
-                .orElseThrow(() -> new ResourceNotFoundException("Técnico atribuído não encontrado"));
-
-        if (tecnicoAtribuido.getPerfil() != Usuario.Perfil.TECNICO
-                && tecnicoAtribuido.getPerfil() != Usuario.Perfil.ADMIN) {
-            throw new BusinessException("O técnico atribuído precisa ter perfil de técnico.");
-        }
-
-        // Se por algum motivo ainda não há técnico responsável, quem está fechando assume
-        if (chamado.getTecnico() == null) {
-            chamado.setTecnico(usuarioAcao);
-        }
-
-        chamado.setDescricaoSolucao(request.getDescricaoSolucao());
-        chamado.setTecnicoAtribuido(tecnicoAtribuido);
-        chamado.setStatus(Status.FECHADO);
-        chamado.setDataFechamento(LocalDateTime.now());
+        chamado.setSetorResponsavel(setor);
         chamado.setUpdatedAt(LocalDateTime.now());
 
         Chamado atualizado = chamadoRepository.save(chamado);
 
-        String descricaoHistorico = String.format(
-                "Chamado fechado por %s. Responsável: %s. Auxiliou: %s.",
-                usuarioAcao.getNome(),
-                atualizado.getTecnico() != null ? atualizado.getTecnico().getNome() : "—",
-                tecnicoAtribuido.getNome()
+        historicoService.registrar(
+                atualizado,
+                usuarioAcao,
+                "Setor responsável definido como " + setor.getDescricao() + " por " + usuarioAcao.getNome(),
+                TipoAlteracao.SETOR
         );
+
+        notificacaoService.notificar(
+                atualizado.getUsuario(),
+                usuarioAcao.getId(),
+                "Chamado #" + atualizado.getId() + " atualizado",
+                usuarioAcao.getNome() + " definiu o setor responsável como " + setor.getDescricao() + ".",
+                TipoNotificacao.CHAMADO_ATUALIZADO,
+                atualizado.getId()
+        );
+
+        ChamadoResponse resposta = mapToResponse(atualizado);
+        chamadoRealtimeService.transmitir(atualizado, resposta, "CHAMADO_ATUALIZADO");
+
+        return resposta;
+    }
+
+    public ChamadoResponse adicionarTecnico(Long chamadoId, AtribuirTecnicoRequest request, Long usuarioAcaoId) {
+
+        Chamado chamado = chamadoRepository.findById(chamadoId)
+                .orElseThrow(() -> new ResourceNotFoundException("Chamado não encontrado"));
+
+        Usuario usuarioAcao = resolverUsuarioAcao(usuarioAcaoId, chamado);
+        exigirGerenciador(usuarioAcao);
+
+        Usuario tecnico = usuarioRepository.findById(request.getTecnicoId())
+                .orElseThrow(() -> new ResourceNotFoundException("Técnico não encontrado"));
+
+        if (tecnico.getPerfil() != Usuario.Perfil.TECNICO || !Boolean.TRUE.equals(tecnico.getAtivo())) {
+            throw new BusinessException("Só é possível atribuir técnicos ativos.");
+        }
+
+        // Idempotente: se já estiver atribuído, apenas retorna o estado
+        // atual (evita duplicidade — item 1.2/1.4 do pedido).
+        boolean jaAtribuido = chamado.getTecnicosAtribuidos().stream()
+                .anyMatch(t -> t.getId().equals(tecnico.getId()));
+
+        if (!jaAtribuido) {
+            chamado.getTecnicosAtribuidos().add(tecnico);
+            chamado.setUpdatedAt(LocalDateTime.now());
+            chamado = chamadoRepository.save(chamado);
+
+            historicoService.registrar(
+                    chamado,
+                    usuarioAcao,
+                    tecnico.getNome() + " foi atribuído ao chamado por " + usuarioAcao.getNome(),
+                    TipoAlteracao.TECNICO
+            );
+
+            // 🔔 + tempo real: o técnico atribuído recebe o chamado na hora,
+            // sem precisar de F5 (item 1.6/1.7 do pedido) — o broadcast
+            // "CHAMADO_ATUALIZADO" abaixo já cobre isso porque técnico/admin
+            // recebem todos os chamados pelo canal de equipe.
+            notificacaoService.notificar(
+                    tecnico,
+                    usuarioAcao.getId(),
+                    "Você foi atribuído ao chamado #" + chamado.getId(),
+                    usuarioAcao.getNome() + " atribuiu você a este chamado.",
+                    TipoNotificacao.CHAMADO_ATUALIZADO,
+                    chamado.getId()
+            );
+        }
+
+        ChamadoResponse resposta = mapToResponse(chamado);
+        chamadoRealtimeService.transmitir(chamado, resposta, "CHAMADO_ATUALIZADO");
+
+        return resposta;
+    }
+
+    public ChamadoResponse removerTecnico(Long chamadoId, Long tecnicoId, Long usuarioAcaoId) {
+
+        Chamado chamado = chamadoRepository.findById(chamadoId)
+                .orElseThrow(() -> new ResourceNotFoundException("Chamado não encontrado"));
+
+        Usuario usuarioAcao = resolverUsuarioAcao(usuarioAcaoId, chamado);
+        exigirGerenciador(usuarioAcao);
+
+        Usuario tecnico = chamado.getTecnicosAtribuidos().stream()
+                .filter(t -> t.getId().equals(tecnicoId))
+                .findFirst()
+                .orElse(null);
+
+        if (tecnico != null) {
+            chamado.getTecnicosAtribuidos().remove(tecnico);
+            chamado.setUpdatedAt(LocalDateTime.now());
+            chamado = chamadoRepository.save(chamado);
+
+            historicoService.registrar(
+                    chamado,
+                    usuarioAcao,
+                    tecnico.getNome() + " foi removido do chamado por " + usuarioAcao.getNome(),
+                    TipoAlteracao.TECNICO
+            );
+
+            notificacaoService.notificar(
+                    tecnico,
+                    usuarioAcao.getId(),
+                    "Você foi removido do chamado #" + chamado.getId(),
+                    usuarioAcao.getNome() + " removeu você deste chamado.",
+                    TipoNotificacao.CHAMADO_ATUALIZADO,
+                    chamado.getId()
+            );
+        }
+
+        ChamadoResponse resposta = mapToResponse(chamado);
+        chamadoRealtimeService.transmitir(chamado, resposta, "CHAMADO_ATUALIZADO");
+
+        return resposta;
+    }
+
+    // ============================================================
+    // 2/3/4. HISTÓRICO DE SOLUÇÕES
+    // ============================================================
+
+    public ChamadoResponse adicionarSolucao(Long chamadoId, AdicionarSolucaoRequest request, Long usuarioAcaoId) {
+
+        Chamado chamado = chamadoRepository.findById(chamadoId)
+                .orElseThrow(() -> new ResourceNotFoundException("Chamado não encontrado"));
+
+        Usuario usuarioAcao = resolverUsuarioAcao(usuarioAcaoId, chamado);
+        exigirGerenciador(usuarioAcao);
+
+        // 🧼 Sanitiza o HTML do editor ANTES de qualquer outra coisa —
+        // nunca confiar em conteúdo vindo do cliente (item 3.2 do pedido).
+        String conteudoSeguro = HtmlSanitizer.sanitizar(request.getConteudo());
+
+        if (HtmlSanitizer.isBlank(conteudoSeguro)) {
+            throw new BusinessException("Descreva a solução antes de salvar.");
+        }
+
+        int proximoNumero = (int) solucaoChamadoRepository.countByChamado(chamado) + 1;
+
+        SolucaoChamado solucao = SolucaoChamado.builder()
+                .chamado(chamado)
+                .autor(usuarioAcao)
+                .numero(proximoNumero)
+                .conteudo(conteudoSeguro)
+                .statusNoMomento(chamado.getStatus())
+                .criadoEm(LocalDateTime.now())
+                .build();
+
+        solucaoChamadoRepository.save(solucao);
+
+        // Mantido só por compatibilidade com telas/impressão que ainda leem
+        // esse campo — sempre espelha a solução mais recente, nunca é a
+        // fonte de verdade (que é o histórico em solucoes_chamado).
+        chamado.setDescricaoSolucao(conteudoSeguro);
+        chamado.setUpdatedAt(LocalDateTime.now());
+        Chamado atualizado = chamadoRepository.save(chamado);
 
         historicoService.registrar(
                 atualizado,
                 usuarioAcao,
-                descricaoHistorico,
-                TipoAlteracao.STATUS
+                "Solução #" + proximoNumero + " registrada por " + usuarioAcao.getNome(),
+                TipoAlteracao.SOLUCAO
         );
 
-        // 🔔 Notifica o solicitante que o chamado foi fechado (agora ele pode avaliar)
+        // 🔔 Notifica quem abriu o chamado
         notificacaoService.notificar(
                 atualizado.getUsuario(),
                 usuarioAcao.getId(),
-                "Chamado #" + atualizado.getId() + " fechado",
-                "Seu chamado foi encerrado por " + usuarioAcao.getNome()
-                        + ". Que tal avaliar o atendimento?",
-                TipoNotificacao.CHAMADO_FECHADO,
+                "Nova solução no chamado #" + atualizado.getId(),
+                usuarioAcao.getNome() + " registrou uma nova solução para o seu chamado.",
+                TipoNotificacao.CHAMADO_ATUALIZADO,
                 atualizado.getId()
         );
 
-        ChamadoResponse respostaFechamento = mapToResponse(atualizado);
-        chamadoRealtimeService.transmitir(atualizado, respostaFechamento, "CHAMADO_ATUALIZADO");
+        ChamadoResponse resposta = mapToResponse(atualizado);
+        chamadoRealtimeService.transmitir(atualizado, resposta, "CHAMADO_ATUALIZADO");
 
-        return respostaFechamento;
+        return resposta;
+    }
+
+    public List<SolucaoResponse> listarSolucoes(Long chamadoId, Long usuarioLogadoId, Usuario.Perfil perfil) {
+
+        Chamado chamado = chamadoRepository.findById(chamadoId)
+                .orElseThrow(() -> new ResourceNotFoundException("Chamado não encontrado"));
+
+        exigirVisualizacao(chamado, usuarioLogadoId, perfil);
+
+        return solucaoChamadoRepository.findByChamadoOrderByNumeroAsc(chamado)
+                .stream()
+                .map(this::mapSolucaoToResponse)
+                .toList();
     }
 
     // NOVO: editar título/descrição do chamado
@@ -474,21 +684,43 @@ public class ChamadoService {
                                 ? chamado.getTecnico().getNome()
                                 : null
                 )
-                .tecnicoAtribuidoId(
-                        chamado.getTecnicoAtribuido() != null
-                                ? chamado.getTecnicoAtribuido().getId()
-                                : null
-                )
-                .tecnicoAtribuidoNome(
-                        chamado.getTecnicoAtribuido() != null
-                                ? chamado.getTecnicoAtribuido().getNome()
-                                : null
-                )
                 .setor(
                         chamado.getUsuario() != null
                                         && chamado.getUsuario().getSetor() != null
                                 ? chamado.getUsuario().getSetor().name()
                                 : null
+                )
+                .setorResponsavel(
+                        chamado.getSetorResponsavel() != null
+                                ? chamado.getSetorResponsavel().name()
+                                : null
+                )
+                .setorResponsavelLabel(
+                        chamado.getSetorResponsavel() != null
+                                ? chamado.getSetorResponsavel().getDescricao()
+                                : null
+                )
+                .tecnicosAtribuidos(
+                        chamado.getTecnicosAtribuidos() == null
+                                ? List.of()
+                                : chamado.getTecnicosAtribuidos().stream()
+                                        .sorted(Comparator.comparing(Usuario::getNome, String.CASE_INSENSITIVE_ORDER))
+                                        .map(t -> UsuarioResponse.builder()
+                                                .id(t.getId())
+                                                .nome(t.getNome())
+                                                .email(t.getEmail())
+                                                .perfil(t.getPerfil().name())
+                                                .ativo(t.getAtivo())
+                                                .build())
+                                        .toList()
+                )
+                .solucoes(
+                        chamado.getId() == null
+                                ? List.of()
+                                : solucaoChamadoRepository.findByChamadoOrderByNumeroAsc(chamado)
+                                        .stream()
+                                        .map(this::mapSolucaoToResponse)
+                                        .toList()
                 )
                 .status(
                         chamado.getStatus() != null
@@ -511,6 +743,19 @@ public class ChamadoService {
                 .createdAt(chamado.getCreatedAt())
                 .updatedAt(chamado.getUpdatedAt())
                 .atrasado(calcularAtrasado(chamado))
+                .build();
+    }
+
+    private SolucaoResponse mapSolucaoToResponse(SolucaoChamado solucao) {
+        return SolucaoResponse.builder()
+                .id(solucao.getId())
+                .numero(solucao.getNumero())
+                .autorId(solucao.getAutor() != null ? solucao.getAutor().getId() : null)
+                .autorNome(solucao.getAutor() != null ? solucao.getAutor().getNome() : null)
+                .conteudo(solucao.getConteudo())
+                .status(solucao.getStatusNoMomento() != null ? solucao.getStatusNoMomento().name() : null)
+                .statusLabel(solucao.getStatusNoMomento() != null ? statusLabel(solucao.getStatusNoMomento()) : null)
+                .criadoEm(solucao.getCriadoEm())
                 .build();
     }
 

@@ -50,11 +50,21 @@ public class UsuarioController {
         return ResponseEntity.ok(usuarioService.listarTodos());
     }
 
-    // NOVO: lista técnicos disponíveis (usado no seletor de "técnico que auxiliou")
+    // Lista técnicos disponíveis
     @GetMapping("/tecnicos")
     @PreAuthorize("hasAnyRole('TECNICO','ADMIN')")
     public ResponseEntity<List<UsuarioResponse>> listarTecnicos() {
         return ResponseEntity.ok(usuarioService.listarTecnicos());
+    }
+
+    // NOVO: autocomplete de técnicos por nome — usado na atribuição de
+    // técnicos ao chamado (item 1.4 do pedido). Só admin/técnico atribuem.
+    @GetMapping("/tecnicos/buscar")
+    @PreAuthorize("hasAnyRole('TECNICO','ADMIN')")
+    public ResponseEntity<List<UsuarioResponse>> buscarTecnicos(
+            @RequestParam(required = false, defaultValue = "") String query
+    ) {
+        return ResponseEntity.ok(usuarioService.buscarTecnicos(query));
     }
 
     @GetMapping("/{id}")

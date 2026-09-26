@@ -2,7 +2,9 @@ package jaabriu.jaabriu_backend.entity;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import jakarta.persistence.*;
 
@@ -43,10 +45,25 @@ public class Chamado {
     @JoinColumn(name = "tecnico_id")
     private Usuario tecnico;
 
-    // 🤝 Técnico que auxiliou/foi atribuído no atendimento (definido no fechamento)
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "tecnico_atribuido_id")
-    private Usuario tecnicoAtribuido;
+    // 🏢 Setor responsável pelo chamado (atribuído por admin/técnico —
+    // substitui a antiga lógica de "técnico que auxiliou"; ver item 1 do
+    // pedido). Reaproveita o mesmo enum Setor já usado pelo setor pessoal
+    // do usuário, evitando duplicar estrutura.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "setor_responsavel", length = 30)
+    private Setor setorResponsavel;
+
+    // 👥 Técnicos atribuídos ao chamado — pode ser mais de um (item 1.3).
+    // Todos eles "possuem" o chamado, recebem em tempo real quando são
+    // atribuídos/removidos, e aparecem na lista de chamados deles.
+    @Default
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "chamado_tecnicos",
+            joinColumns = @JoinColumn(name = "chamado_id"),
+            inverseJoinColumns = @JoinColumn(name = "usuario_id")
+    )
+    private Set<Usuario> tecnicosAtribuidos = new HashSet<>();
 
     // ✅ ENUMS
     @Enumerated(EnumType.STRING)
@@ -102,6 +119,14 @@ public class Chamado {
     @Default
     @OneToMany(mappedBy = "chamado", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<HistoricoAlteracao> historicos = new ArrayList<>();
+
+    // 🧾 Histórico de soluções — nunca apagado/substituído, sempre um novo
+    // registro (item 2 do pedido). O antigo campo "descricaoSolucao" acima
+    // é preservado só pra não quebrar quem já lia esse campo (impressão,
+    // por ex.) e passa a espelhar automaticamente a solução mais recente.
+    @Default
+    @OneToMany(mappedBy = "chamado", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<SolucaoChamado> solucoes = new ArrayList<>();
 
     @PrePersist
     public void prePersist() {

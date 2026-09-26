@@ -8,9 +8,11 @@ import jaabriu.jaabriu_backend.entity.Usuario;
 import jaabriu.jaabriu_backend.exception.BusinessException;
 import jaabriu.jaabriu_backend.exception.ResourceNotFoundException;
 import jaabriu.jaabriu_backend.repository.UsuarioRepository;
+import jaabriu.jaabriu_backend.util.TextoUtils;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.Comparator;
 import java.util.List;
 
 @Service
@@ -39,6 +41,22 @@ public class UsuarioService {
         return usuarioRepository.findAll()
                 .stream()
                 .filter(u -> u.getPerfil() == Usuario.Perfil.TECNICO && Boolean.TRUE.equals(u.getAtivo()))
+                .map(this::converterParaResponse)
+                .toList();
+    }
+
+    // NOVO: autocomplete de técnicos (item 1.4 do pedido) — busca por parte
+    // do nome, ignorando maiúsculas/minúsculas e acentos, no máximo 10
+    // sugestões. Usado na atribuição de técnicos ao chamado.
+    public List<UsuarioResponse> buscarTecnicos(String query) {
+        String termo = TextoUtils.normalizar(query);
+
+        return usuarioRepository.findAll()
+                .stream()
+                .filter(u -> u.getPerfil() == Usuario.Perfil.TECNICO && Boolean.TRUE.equals(u.getAtivo()))
+                .filter(u -> termo.isBlank() || TextoUtils.normalizar(u.getNome()).contains(termo))
+                .sorted(Comparator.comparing(Usuario::getNome, String.CASE_INSENSITIVE_ORDER))
+                .limit(10)
                 .map(this::converterParaResponse)
                 .toList();
     }

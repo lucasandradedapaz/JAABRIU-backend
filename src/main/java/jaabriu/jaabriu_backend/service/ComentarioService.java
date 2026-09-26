@@ -87,7 +87,7 @@ public class ComentarioService {
         Set<Usuario> envolvidos = new HashSet<>();
         if (chamado.getUsuario() != null) envolvidos.add(chamado.getUsuario());
         if (chamado.getTecnico() != null) envolvidos.add(chamado.getTecnico());
-        if (chamado.getTecnicoAtribuido() != null) envolvidos.add(chamado.getTecnicoAtribuido());
+        if (chamado.getTecnicosAtribuidos() != null) envolvidos.addAll(chamado.getTecnicosAtribuidos());
 
         for (Usuario destinatario : envolvidos) {
             notificacaoService.notificar(

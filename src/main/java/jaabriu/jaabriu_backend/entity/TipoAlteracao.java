@@ -5,5 +5,7 @@ public enum TipoAlteracao {
     PRIORIDADE,
     CATEGORIA,
     TECNICO,
+    SETOR,
+    SOLUCAO,
     OUTRO
 }
